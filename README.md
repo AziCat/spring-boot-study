@@ -60,7 +60,7 @@ org.springframework.boot.context.logging.LoggingApplicationListener,\
 org.springframework.boot.liquibase.LiquibaseServiceLocatorApplicationListener
 ...
 ```
-在调用完构造函数后，调用该实例的**run()**方法：
+在调用完构造函数后，调用该实例的`run()`方法：
 ```java
     public ConfigurableApplicationContext run(String... args) {
         StopWatch stopWatch = new StopWatch();
@@ -130,8 +130,9 @@ org.springframework.boot.liquibase.LiquibaseServiceLocatorApplicationListener
         return context;
     }
 ```
+---
 ## 事件发布
-在上述**run()**方法中，使用了spring内置的事件发布机制：
+在上述`run()`方法中，使用了spring内置的事件发布机制：
 ```java
         //实例化了SpringApplicationRunListeners对象，其持有EventPublishingRunListener实例
         SpringApplicationRunListeners listeners = getRunListeners(args);
@@ -183,7 +184,7 @@ public class MyEvent extends ApplicationEvent {
 ```java
 applicationContext.publishEvent(new MyEvent(this.class,"消息正文"));
 ```
-* 现在我们要处理**MyEvent**事件，可以通过实现接口**ApplicationListener**或者使用注解**@EventListener**来实现：
+* 现在我们要处理**MyEvent**事件，可以通过实现接口**ApplicationListener**或者使用注解`@EventListener`来实现：
 ```java
 /**
  * 测试事件监听-监听MyEvent事件
@@ -215,3 +216,5 @@ public class MyEventListenerTwo {
     }
 }
 ```
+---
+## ConfigurableEnvironment加载
