@@ -279,3 +279,20 @@ configureEnvironment(environment, applicationArguments.getSourceArgs());
  */
 listeners.environmentPrepared(environment);
 ```
+---
+## 打印自定义LOGO
+现在回到`run()`方法，在初始化**ConfigurableEnvironment**后，应用就开始打印`LOGO`：
+```java
+//居然是在这里打印应用的logo
+Banner printedBanner = printBanner(environment);
+```
+spring内置了好几个打印用的`Banner`实例，用于对应不同格式的LOGO。你可以用`文本`，`图片`，`GIF`作
+为自己应用的LOGO，图片跟GIF的效果不怎么好（亲测）。现在讲讲如何定义我们的LOGO，以文本为例。
+* 创建banner.txt（其它格式命名也要为`banner`）
+* 把banner.txt放置到资源目录中
+
+![](img/banner.png)
+* 如果是文本的LOGO，可以使用`{配置}`来打印配置信息，如spring-boot版本为`${spring-boot.version}`，
+详细可以查看官方关于**Banner**的说明。
+* 编译重启即可看到自定义的LOGO生效。
+---
