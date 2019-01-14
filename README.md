@@ -240,7 +240,6 @@ configureEnvironment(environment, applicationArguments.getSourceArgs());
 **configurePropertySources**方法初步加载`defaultProperties`，然后判断是否有命令行参数传入，如果
 有，把命令行参数添加到环境变量中，且优先级最高:
 ```java
-
     protected void configurePropertySources(ConfigurableEnvironment environment,
                                             String[] args) {
         MutablePropertySources sources = environment.getPropertySources();
