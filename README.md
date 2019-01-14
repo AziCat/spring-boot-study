@@ -218,3 +218,64 @@ public class MyEventListenerTwo {
 ```
 ---
 ## ConfigurableEnvironment加载
+在发布完`ApplicationStartingEvent`事件后，应用开始加载配置项：
+```java
+//准备环境参数
+ConfigurableEnvironment environment = prepareEnvironment(listeners,applicationArguments);
+```
+在**prepareEnvironment**方法中，初始化`ConfigurableEnvironment`实例，并加载默认配置。
+```java
+//web应用返回StandardServletEnvironment，构造函数调用时，已加载系统参数
+ConfigurableEnvironment environment = getOrCreateEnvironment();
+configureEnvironment(environment, applicationArguments.getSourceArgs());
+```
+主要的代码实现在**configureEnvironment**中：
+```java
+    protected void configureEnvironment(ConfigurableEnvironment environment,
+                                        String[] args) {
+        configurePropertySources(environment, args);
+        configureProfiles(environment, args);
+    }
+```
+**configurePropertySources**方法初步加载`defaultProperties`，然后判断是否有命令行参数传入，如果
+有，把命令行参数添加到环境变量中，且优先级最高:
+```java
+
+    protected void configurePropertySources(ConfigurableEnvironment environment,
+                                            String[] args) {
+        MutablePropertySources sources = environment.getPropertySources();
+        if (this.defaultProperties != null && !this.defaultProperties.isEmpty()) {
+            //如果有默认配置，添加到最后
+            sources.addLast(
+                    new MapPropertySource("defaultProperties", this.defaultProperties));
+        }
+        if (this.addCommandLineProperties && args.length > 0) {
+            String name = CommandLinePropertySource.COMMAND_LINE_PROPERTY_SOURCE_NAME;
+            if (sources.contains(name)) {
+                PropertySource<?> source = sources.get(name);
+                CompositePropertySource composite = new CompositePropertySource(name);
+                composite.addPropertySource(new SimpleCommandLinePropertySource(
+                        "springApplicationCommandLineArgs", args));
+                composite.addPropertySource(source);
+                sources.replace(name, composite);
+            } else {
+                //-Dxxxxx=yyyy这种参数的优先级最高
+                sources.addFirst(new SimpleCommandLinePropertySource(args));
+            }
+        }
+    }
+```
+在**configureProfiles**中获取`spring.profiles.active`并设置到环境变量中。完成这些操作后，发布
+`ApplicationEnvironmentPreparedEvent`事件，一些配置中心的实现方式，都可以基于此事件的接收来做自己
+的配置嵌入。其中内置的监听者中，比较重要的是**ConfigFileApplicationListener**，它监听到`ApplicationEnvironmentPreparedEvent`事件，
+会获取所有**EnvironmentPostProcessor**接口实例，调用`postProcessEnvironment()`方法。
+```java
+//准备好环境变量，发布ApplicationEnvironmentPreparedEvent事件
+/*
+ ConfigFileApplicationListener
+    ConfigFileApplicationListener实现了接口SmartApplicationListener,EnvironmentPostProcessor，并在实现方法中获取所有实现EnvironmentPostProcessor接口
+    的实例(包括自己)，并进行调用postProcessEnvironment()
+    必须要注册在META-INF/spring.factories中
+ */
+listeners.environmentPrepared(environment);
+```
