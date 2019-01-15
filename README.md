@@ -295,3 +295,242 @@ spring内置了好几个打印用的`Banner`实例，用于对应不同格式的
 详细可以查看官方关于**Banner**的说明。
 * 编译重启即可看到自定义的LOGO生效。
 ---
+## spring上下文对象构造
+在完成前面的工作后，应用开始构造上下文对象**ConfigurableApplicationContext**，其中还包括了**Bean**的
+创建，注入等复杂操作。首先是通过反射先调用构造方法，创建上下文对象：
+```java
+    context = createApplicationContext();
+    ...
+    protected ConfigurableApplicationContext createApplicationContext() {
+        Class<?> contextClass = this.applicationContextClass;
+        if (contextClass == null) {
+            try {
+                switch (this.webApplicationType) {
+                    case SERVLET:
+                        contextClass = Class.forName(DEFAULT_WEB_CONTEXT_CLASS);
+                        break;
+                    case REACTIVE:
+                        contextClass = Class.forName(DEFAULT_REACTIVE_WEB_CONTEXT_CLASS);
+                        break;
+                    default:
+                        contextClass = Class.forName(DEFAULT_CONTEXT_CLASS);
+                }
+            } catch (ClassNotFoundException ex) {
+                throw new IllegalStateException(
+                        "Unable create a default ApplicationContext, "
+                                + "please specify an ApplicationContextClass",
+                        ex);
+            }
+        }
+        return (ConfigurableApplicationContext) BeanUtils.instantiateClass(contextClass);
+    }
+```
+上述创建容器上下文对象，web应用为**AnnotationConfigServletWebServerApplicationContext**，
+经过多层继承，在父类的构造方法初始化了许多成员变量：
+
+* 先执行顶层父类DefaultResourceLoader构造方法，初始化this.classLoader = ClassUtils.getDefaultClassLoader()
+* 执行父类AbstractApplicationContext构造方法，初始化this.resourcePatternResolver = getResourcePatternResolver()
+* 执行父类GenericApplicationContext构造方法，初始化this.beanFactory = new DefaultListableBeanFactory()
+    * beanFactory初始化时，经过多层继承初始化部分成员变量
+* 执行父类GenericWebApplicationContext构造方法
+* 执行父类ServletWebServerApplicationContext构造方法
+* 执行本身构造方法，初始化this.reader与this.scanner
+    * reader包含了各类注解解析器
+
+在调用完构造方法后，执行`prepareContext`方法。在此方法内，会给上下文对象设置**ConfigurableEnvironment**对象，
+并执行之前已加载的**ApplicationContextInitializer**，最后发布**ApplicationPreparedEvent**事件：
+```java
+    private void prepareContext(ConfigurableApplicationContext context,
+                                ConfigurableEnvironment environment, SpringApplicationRunListeners listeners,
+                                ApplicationArguments applicationArguments, Banner printedBanner) {
+        //设置Environment
+        context.setEnvironment(environment);
+        postProcessApplicationContext(context);
+        //在上下文Refresh前调用所有已加载ApplicationContextInitializer
+        applyInitializers(context);
+        //发布contextPrepared事件，不过目前此版本好像没有响应此事件
+        listeners.contextPrepared(context);
+        if (this.logStartupInfo) {
+            logStartupInfo(context.getParent() == null);
+            logStartupProfileInfo(context);
+        }
+
+        // Add boot specific singleton beans
+        // 注册了一个单例bean，这种注册方式不会触发创建回调函数与销毁回调函数
+        context.getBeanFactory().registerSingleton("springApplicationArguments",
+                applicationArguments);
+        if (printedBanner != null) {
+            context.getBeanFactory().registerSingleton("springBootBanner", printedBanner);
+        }
+
+        // Load the sources
+        Set<Object> sources = getAllSources();
+        Assert.notEmpty(sources, "Sources must not be empty");
+        load(context, sources.toArray(new Object[0]));
+        //发布ApplicationPreparedEvent事件，
+        listeners.contextLoaded(context);
+    }
+```
+
+然后会调用`refreshContext`方法。此方法比较关键，内容非常多，**Bean**的配置扫描分析、加载、实例化与注入也是在此方法内完成，这里
+先跳过。
+
+等**Bean**创建完毕调用`afterRefresh`方法，当前版本里面没有做什么操作。最后就是发布**ApplicationStartedEvent**
+事件，并调用**ApplicationRunner**与**CommandLineRunner**的实现类。
+```java
+    //关键方法在此，内容非常多
+    refreshContext(context);
+    //这里居然没做什么
+    afterRefresh(context, applicationArguments);
+    ...
+    //发布ApplicationStartedEvent事件
+    listeners.started(context);
+    //调用ApplicationRunner与CommandLineRunner的实现类
+    callRunners(context, applicationArguments);
+```
+
+上述操作都没有出现异常，说明启明成功，发布**ApplicationReadyEvent**事件，并返回上下文对象。
+```java
+    try {
+        //发布ApplicationReadyEvent事件
+        listeners.running(context);
+    } catch (Throwable ex) {
+        handleRunFailure(context, ex, exceptionReporters, null);
+        throw new IllegalStateException(ex);
+    }
+    //返回spring上下文对象
+    return context;
+```
+---
+## Bean实例化过程
+上述的`refreshContext`方法，最终会调用到父类的**AbstractApplicationContext**的`refresh`方法。
+```java
+    @Override
+    public void refresh() throws BeansException, IllegalStateException {
+        synchronized (this.startupShutdownMonitor) {
+            // Prepare this context for refreshing.
+            // 初始化PropertySources
+            prepareRefresh();
+
+            // Tell the subclass to refresh the internal bean factory.
+            //刷新子类BeanFactory，并返回当前BeanFactory
+            ConfigurableListableBeanFactory beanFactory = obtainFreshBeanFactory();
+
+            // Prepare the bean factory for use in this context.
+            // 配置beanFactory上下文的标准特征，例如ClassLoader与 post-processors（后置处理器
+            prepareBeanFactory(beanFactory);
+
+            try {
+                // Allows post-processing of the bean factory in context subclasses.
+                //子类添加其post-processing
+                postProcessBeanFactory(beanFactory);
+
+                // Invoke factory processors registered as beans in the context.
+                // 执行spring内置的BeanFactoryPostProcessor，如ConfigurationClassPostProcessor（引导@Configuration配置）
+                /*
+                  先执行实现了PriorityOrdered接口的BeanDefinitionRegistryPostProcessors接口方法如ConfigurationClassPostProcessor
+                       在ConfigurationClassPostProcessor.processConfigBeanDefinitions()中
+                       先处理ImportBeanDefinitionRegistrar实例（如果实例实现了XXXAware接口，
+                       先执行XXXAware接口方法，再调用ImportBeanDefinitionRegistrar接口方法）
+                 */
+                /*
+                  再执行实现了Ordered接口的BeanDefinitionRegistryPostProcessor实例方法，如果实例实现了XXXAware接口，先执行XXXAware接口方法,
+                  然后在invokeBeanDefinitionRegistryPostProcessors()调用BeanDefinitionRegistryPostProcessor接口方法
+                 */
+                /*
+                  最后执行其它BeanDefinitionRegistryPostProcessor实例方法，如果实例实现了XXXAware接口，先执行XXXAware接口方法
+                 */
+                /*
+                  上述所有BeanDefinitionRegistryPostProcessor实例方法执行完毕后，执行BeanDefinitionRegistryPostProcessor父接口
+                  BeanFactoryPostProcessor接口方法（算是回调方法吧）
+                 */
+                /*
+                  然后获取实现BeanFactoryPostProcessor的实例数组进行遍历，如果此实例已在上面的步骤中执行过，则跳过
+                  如果没执行，则按实现PriorityOrdered接口的先执行，再执行实现Ordered接口的，最后执行剩下的。
+                  执行完毕清除beanFactory中的MetadataCache
+                 */
+                invokeBeanFactoryPostProcessors(beanFactory);
+
+                // Register bean processors that intercept bean creation.
+                /*
+                  按顺序(PriorityOrdered>Ordered>其它)注册BeanPostProcessor，把BeanPostProcessor设置到BeanFactory中
+                 */
+                registerBeanPostProcessors(beanFactory);
+
+                // Initialize message source for this context.
+                initMessageSource();
+
+                // Initialize event multicaster for this context.
+                initApplicationEventMulticaster();
+
+                // Initialize other special beans in specific context subclasses.
+                /*
+                  执行子类的onRefresh()方法，根据不同的情况，初始化不同的特殊bean
+                  web应用执行GenericWebApplicationContext.onRefresh()
+                  再执行ServletWebServerApplicationContext.onRefresh()
+                        在createWebServer()中创建Web相关的Bean如DispatcherServlet等。
+                 */
+                onRefresh();
+
+                // Check for listener beans and register them.
+                /*
+                  检查并注册ApplicationListener实现类，并把earlyApplicationEvents发布
+                 */
+                registerListeners();
+
+                // Instantiate all remaining (non-lazy-init) singletons.
+                /*
+                  实例化所有非懒加载的单例，创建Bean时会调用各个BeanPostProcessor的前后置方法。
+                  @PostConstruct, @Resource, @PreDestroy也是通过BeanPostProcessor完成（CommonAnnotationBeanPostProcessor）
+                  You can see in the following diagram from Spring that these BPP's are handled after Dependency Injection but before Bean Ready For Use (Which means as much as injectable).
+                 */
+                finishBeanFactoryInitialization(beanFactory);
+
+                // Last step: publish corresponding event.
+                /*
+                清空资源缓存
+                初始化LifecycleProcessor，一般是默认的DefaultLifecycleProcessor
+                    LifecycleProcessor获取所有实现Lifecycle接口的Bean，调用其start()方法
+                发布ContextRefreshedEvent事件
+                 */
+                finishRefresh();
+            } catch (BeansException ex) {
+                if (logger.isWarnEnabled()) {
+                    logger.warn("Exception encountered during context initialization - " +
+                            "cancelling refresh attempt: " + ex);
+                }
+
+                // Destroy already created singletons to avoid dangling resources.
+                /*
+                如果捕获到异常，则调用单例Bean生命周期中的Destroy方法
+                 */
+                destroyBeans();
+
+                // Reset 'active' flag.
+                cancelRefresh(ex);
+
+                // Propagate exception to caller.
+                throw ex;
+            } finally {
+                // Reset common introspection caches in Spring's core, since we
+                // might not ever need metadata for singleton beans anymore...
+                resetCommonCaches();
+            }
+        }
+    }
+```
+
+先说说`prepareRefresh()`方法，其方法注释为：
+
+    Prepare this context for refreshing, setting its startup date and active flag as well as performing any initialization of property sources.
+
+在这个方法内，会初始化`PropertySource`并进行校验：
+```java
+    // Initialize any placeholder property sources in the context environment
+    initPropertySources();
+
+    // Validate that all properties marked as required are resolvable
+    // see ConfigurablePropertyResolver#setRequiredProperties
+    getEnvironment().validateRequiredProperties();
+```
+
